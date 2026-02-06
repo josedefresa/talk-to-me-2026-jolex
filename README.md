@@ -1,8 +1,8 @@
 # Talk to Me
 
-## Ressources semaine bloc 1CVmid / ECAL M&ID Février 2025
+## Ressources semaine bloc 1CVmid / ECAL M&ID Février 2026
 
-_Alain Bellet + Marius Parisod_
+_Alain Bellet + Livia Schmid_
 
 https://ecal-mid.ch/talktome/
 
@@ -24,19 +24,30 @@ Tout se passe dans **DialogMachine.js**
 ### Parler
 
 ```javascript
-this.speechText(text, [index_voix, pitch, rate])
+this.speechText(text, [index_voix_ou_langue, pitch, rate])
 ```
 
 Parameters:
 - `text`: The text to speak
-- `index_voix`: Voice index (optional)
-- `pitch`: Pitch value (0.1-2) (optional)
-- `rate`: Speech rate (0.1-10) (optional)
+- `index_voix_ou_langue`: Voice index (number) or language code (string) - optional, default: 'en-US'
+  - **Number**: Direct voice index (0, 1, 2, etc.)
+  - **String**: Language code ('en-US', 'en-GB', 'fr-FR', 'de-DE', etc.) - automatically selects first matching voice
+- `pitch`: Pitch value (0.1-2) (optional, default: 1)
+- `rate`: Speech rate (0.1-10) (optional, default: 1)
 
-Example:
+Examples:
 ```javascript
-// dire hello avec la première voix
+// Utiliser un index de voix (méthode classique)
 this.speechText('hello', [0, 1, 0.8])
+
+// Utiliser un code de langue (nouvelle méthode)
+this.speechText('hello', ['en-US', 1, 0.8])
+this.speechText('hello', ['en-GB', 1, 0.8])
+this.speechText('bonjour', ['fr-FR', 1, 0.8])
+this.speechText('hola', ['es-ES', 1, 0.8])
+
+// Utiliser la voix par défaut (en-US)
+this.speechText('hello')
 ```
 
 ### Leds
