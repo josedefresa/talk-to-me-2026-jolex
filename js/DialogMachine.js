@@ -32,7 +32,10 @@ export default class DialogMachine extends TalkMachine {
 
     // Tracking for long-press dialog logic
     this.currentGroundButton = null; // Tracks which button (3, 4, or 5) is currently active
+    this.lastLongPressedButton = null; // Tracks the last button that completed a long press
     this.longPressThreshold = 3000; // 3 seconds in milliseconds
+    this.buttonPressTimers = {}; // Tracks timers for each button
+    this.longPressTriggered = {}; // Tracks if long press already triggered for each button
     
     // LED stepper initialization flags
     this.rainLedStepperInitialized = false;
@@ -149,6 +152,7 @@ export default class DialogMachine extends TalkMachine {
 
     // Reset ground button tracking
     this.currentGroundButton = null;
+    this.lastLongPressedButton = null;
     this.rainLedStepperInitialized = false;
     this.windLedStepperInitialized = false;
 
@@ -387,6 +391,27 @@ export default class DialogMachine extends TalkMachine {
       return;
     }
     
+    // Start long press timer for ground buttons (3, 4, 5)
+    const isGroundButton = button === "3" || button === "4" || button === "5";
+    if (isGroundButton && this.waitingForUserInput) {
+      // Clear any existing timer for this button
+      if (this.buttonPressTimers[button]) {
+        clearTimeout(this.buttonPressTimers[button]);
+      }
+      
+      // Reset the triggered flag
+      this.longPressTriggered[button] = false;
+      
+      // Set new timer to trigger after longPressThreshold
+      this.buttonPressTimers[button] = setTimeout(() => {
+        // Trigger long press immediately (while button is still held)
+        if (this.buttonStates[button] === 1 && !this.longPressTriggered[button]) {
+          this.longPressTriggered[button] = true;
+          this._handleButtonLongPressedImmediate(button);
+        }
+      }, this.longPressThreshold);
+    }
+    
     if (this.waitingForUserInput) {
       // this.dialogFlow('pressed', button);
     }
@@ -396,6 +421,12 @@ export default class DialogMachine extends TalkMachine {
     // Convert button to number (it comes in as a string)
     
     this.buttonStates[button] = 0;
+    
+    // Clear any long press timer for this button
+    if (this.buttonPressTimers[button]) {
+      clearTimeout(this.buttonPressTimers[button]);
+      delete this.buttonPressTimers[button];
+    }
 
     if (!this.dialogStarted || !this.waitingForUserInput) return;
 
@@ -424,14 +455,12 @@ export default class DialogMachine extends TalkMachine {
   }
 
   /**
-   * override de _handleButtonLongPressed de TalkMachine
-   * @override
-   * @protected
+   * Immediate long press handler - called when threshold is reached while button is still held
+   * @param {string} button
+   * @private
    */
-  _handleButtonLongPressed(button, simulated = false) {
+  _handleButtonLongPressedImmediate(button) {
     if (!this.waitingForUserInput) return;
-
-    
 
     // Check if this is one of the ground buttons (3, 4, or 5)
     const isGroundButton = button === "3" || button === "4" || button === "5";
@@ -441,43 +470,54 @@ export default class DialogMachine extends TalkMachine {
       return;
     }
 
-    this.fancyLogger.logMessage(`Button ${button} long-pressed (${this.longPressThreshold}ms)`);
+    this.fancyLogger.logMessage(`Button ${button} long-pressed IMMEDIATELY (${this.longPressThreshold}ms threshold reached while holding)`);
 
     // Handle based on current state
     if (this.nextState === "waiting-for-ground") {
-      // First long press - go to welcome
+      // First long press - go to welcome immediately
       this.currentGroundButton = button;
+      this.lastLongPressedButton = button;
       this.nextState = "welcome";
       this.dialogFlow();
-    } else if (this.nextState === "choose-rain") {
-      // Check if it's a DIFFERENT ground button
-      if (button !== this.currentGroundButton) {
-        this.fancyLogger.logMessage(`Switching from button ${this.currentGroundButton} to button ${this.currentGroundButton}`);
-        this.currentGroundButton = button;
-        
-        // Reset local LED states when switching floors
-        this.localLedStates.fill(0);
+    } else if (this.nextState === "choose-rain" || this.nextState === "choose-wind") {
+      // Check if it's the SAME button that was just long-pressed
+      if (button === this.lastLongPressedButton) {
+        this.fancyLogger.logMessage(`Same button ${button} long-pressed again - ignoring`);
+        return; // Do nothing if same button
+      }
+      
+      // It's a DIFFERENT ground button - switch state
+      this.fancyLogger.logMessage(`Switching from button ${this.lastLongPressedButton} to button ${button}`);
+      this.currentGroundButton = button;
+      this.lastLongPressedButton = button;
+      
+      // Reset local LED states when switching floors
+      this.localLedStates.fill(0);
+      
+      // Toggle between choose-rain and choose-wind
+      if (this.nextState === "choose-rain") {
         this.windLedStepperInitialized = false;
-        
         this.nextState = "choose-wind";
-        this.dialogFlow();
       } else {
-        this.fancyLogger.logMessage(`Same button ${button} still pressed - staying in choose-rain`);
-      }
-    } else if (this.nextState === "choose-wind") {
-      // Allow switching back to choose-rain or to another floor
-      if (button !== this.currentGroundButton) {
-        this.fancyLogger.logMessage(`Switching from button ${this.currentGroundButton} to button ${button}`);
-        this.currentGroundButton = button;
-        
-        // Reset local LED states when switching floors
-        this.localLedStates.fill(0);
         this.rainLedStepperInitialized = false;
-        
         this.nextState = "choose-rain";
-        this.dialogFlow();
       }
+      
+      this.dialogFlow();
     }
+  }
+
+  /**
+   * override de _handleButtonLongPressed de TalkMachine
+   * This is called on button RELEASE by the parent class if duration >= longPressDelay
+   * We handle everything immediately in _handleButtonLongPressedImmediate, so this does nothing
+   * @override
+   * @protected
+   */
+  _handleButtonLongPressed(button, simulated = false) {
+    // Do nothing - we handle long press immediately when threshold is reached
+    // This method is only called by parent class on release, but we've already handled it
+    this.fancyLogger.logMessage(`Button ${button} released after long press (already handled immediately)`);
   }
 
   /**
