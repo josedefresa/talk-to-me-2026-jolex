@@ -15,17 +15,21 @@ export default class DialogMachine extends TalkMachine {
     this.shouldContinue = false;
 
     // initialiser les éléments de la machine de dialogue
-    this.maxLeds = 10;
+    this.maxLeds = 30;
     this.ui.initLEDUI();
 
     // Registre des états des boutons - simple array: 0 = released, 1 = pressed
     this.buttonStates = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    // Mode de fonctionnement (on bypass le dialogue existant)
-    this.mode = "led-stepper";
+    // Mode de fonctionnement
+    this.mode = "dialog"; // Changed from "led-stepper"
 
     // Array d'état des LEDs: 0 = black, 1 = white
     this.ledStates = new Array(this.maxLeds).fill(0);
+
+    // Tracking for long-press dialog logic
+    this.currentTriadButton = null; // Tracks which button (3, 4, or 5) is currently active
+    this.longPressThreshold = 3000; // 3 seconds in milliseconds
   }
 
   /* CONTRÔLE DU DIALOGUE */
@@ -43,12 +47,16 @@ export default class DialogMachine extends TalkMachine {
     this.ledStates.fill(0);
     this._renderAllLedsFromState();
 
+    // Reset triad button tracking
+    this.currentTriadButton = null;
+
     this.fancyLogger.logMessage(
-      "Mode LED stepper: bouton 0 = + (black→white), bouton 1 = - (white→black)",
+      "Dialog started: Long-press button 3, 4, or 5 to begin...",
     );
 
-    // (On garde la machine prête si tu veux revenir au dialogue plus tard)
+    // Start with initialisation state
     this.nextState = "initialisation";
+    this.dialogFlow();
   }
 
   /* FLUX DU DIALOGUE */
@@ -89,9 +97,40 @@ export default class DialogMachine extends TalkMachine {
       case "initialisation":
         // CONCEPT DE DIALOGUE: État de configuration - prépare le système avant l'interaction
         this.ledsAllOff();
-        this.nextState = "welcome";
-        this.fancyLogger.logMessage("initialisation done");
-        this.goToNextState();
+        this.nextState = "waiting-for-triad"; // Wait for buttons 3, 4, or 5
+        this.fancyLogger.logMessage("initialisation done - waiting for long press on button 3, 4, or 5");
+        this.waitingForUserInput = true;
+        break;
+
+      case "waiting-for-triad":
+        // This state is waiting for a long press on buttons 3, 4, or 5
+        // The logic is handled in _handleButtonLongPressed
+        this.fancyLogger.logMessage("Waiting for long press on button 3, 4, or 5...");
+        break;
+
+      case "welcome":
+        // CONCEPT: First triad button was long-pressed
+        this.fancyLogger.logMessage(`Welcome! Button ${this.currentTriadButton} long-pressed`);
+        this.speakNormal("Welcome! Let's choose the rain.");
+        this.shouldContinue = true; // Continue to next state after speech
+        this.nextState = "choose-rain";
+        break;
+
+      case "choose-rain":
+        // CONCEPT: User is in "rain" mode with current button held
+        this.fancyLogger.logMessage(`Choose rain mode - current button: ${this.currentTriadButton}`);
+        this.speakNormal(`You are in rain mode with button ${this.currentTriadButton}.`);
+        // Stay in this state until button is released AND another triad button is long-pressed
+        // This is handled in _handleButtonReleased and _handleButtonLongPressed
+        this.waitingForUserInput = true;
+        break;
+
+      case "choose-wind":
+        // CONCEPT: User switched to another triad button
+        this.fancyLogger.logMessage(`Switched to wind mode - new button: ${this.currentTriadButton}`);
+        this.speakNormal(`Now in wind mode with button ${this.currentTriadButton}.`);
+        // You can add more logic here or transition to other states
+        this.waitingForUserInput = true;
         break;
 
       default:
@@ -229,17 +268,34 @@ export default class DialogMachine extends TalkMachine {
   }
 
   _handleButtonReleased(button, simulated = false) {
+    // Convert button to number (it comes in as a string)
+    
     this.buttonStates[button] = 0;
 
     if (!this.dialogStarted || !this.waitingForUserInput) return;
 
+    // Check if this is the currently active triad button being released
+    const isTriadButton = button === "3" || button === "4" || button === "5";
+    
+    if (isTriadButton && button === this.currentTriadButton) {
+      this.fancyLogger.logMessage(`Button ${button} (triad) released - current button cleared`);
+      
+      // In choose-rain or choose-wind, note that the button was released
+      // The user now needs to long-press another triad button to switch modes
+      if (this.nextState === "choose-rain" || this.nextState === "choose-wind") {
+        this.fancyLogger.logMessage("Waiting for next triad button long-press...");
+      }
+    }
+
+    // Handle old LED stepper mode if needed
     if (this.mode === "led-stepper") {
       this.fancyLogger.logMessage(`button released raw=${button}`);
       this._handleLedStepper(button);
       return;
     }
 
-    this.dialogFlow("released", button);
+    // You can add more released logic here if needed
+    // this.dialogFlow("released", button);
   }
 
   /**
@@ -248,8 +304,36 @@ export default class DialogMachine extends TalkMachine {
    * @protected
    */
   _handleButtonLongPressed(button, simulated = false) {
-    if (this.waitingForUserInput) {
-      //this.dialogFlow('longpress', button);
+    if (!this.waitingForUserInput) return;
+
+    
+
+    // Check if this is one of the triad buttons (3, 4, or 5)
+    const isTriadButton = button === "3" || button === "4" || button === "5";
+
+    if (!isTriadButton) {
+      this.fancyLogger.logWarning(`Button ${button} is not part of the triad (3, 4, 5)`);
+      return;
+    }
+
+    this.fancyLogger.logMessage(`Button ${button} long-pressed (${this.longPressThreshold}ms)`);
+
+    // Handle based on current state
+    if (this.nextState === "waiting-for-triad") {
+      // First long press - go to welcome
+      this.currentTriadButton = button;
+      this.nextState = "welcome";
+      this.dialogFlow();
+    } else if (this.nextState === "choose-rain") {
+      // Check if it's a DIFFERENT triad button
+      if (button !== this.currentTriadButton) {
+        this.fancyLogger.logMessage(`Switching from button ${this.currentTriadButton} to button ${button}`);
+        this.currentTriadButton = button;
+        this.nextState = "choose-wind";
+        this.dialogFlow();
+      } else {
+        this.fancyLogger.logMessage(`Same button ${button} still pressed - staying in choose-rain`);
+      }
     }
   }
 
