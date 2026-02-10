@@ -27,9 +27,108 @@ export default class DialogMachine extends TalkMachine {
     // Array d'état des LEDs: 0 = black, 1 = white
     this.ledStates = new Array(this.maxLeds).fill(0);
 
+    // Local LED states for each floor (0-9 for each floor)
+    this.localLedStates = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
     // Tracking for long-press dialog logic
-    this.currentTriadButton = null; // Tracks which button (3, 4, or 5) is currently active
+    this.currentGroundButton = null; // Tracks which button (3, 4, or 5) is currently active
     this.longPressThreshold = 3000; // 3 seconds in milliseconds
+    
+    // LED stepper initialization flags
+    this.rainLedStepperInitialized = false;
+    this.windLedStepperInitialized = false;
+  }
+
+  /**
+   * Get the current LED array mapping based on currentGroundButton
+   * Maps local indices 0-9 to physical LED indices based on floor
+   * Floor 3: LEDs 0-9
+   * Floor 4: LEDs 10-19
+   * Floor 5: LEDs 20-29
+   * @returns {Array<number>} Array of 10 physical LED indices
+   */
+  getCurrentLedArray() {
+    const ledMapping = {
+      "3": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],      // Floor 3: LEDs 0-9
+      "4": [10, 11, 12, 13, 14, 15, 16, 17, 18, 19],  // Floor 4: LEDs 10-19
+      "5": [20, 21, 22, 23, 24, 25, 26, 27, 28, 29]   // Floor 5: LEDs 20-29
+    };
+    
+    // Default to floor 3 if no ground button is set
+    return ledMapping[this.currentGroundButton] || ledMapping["3"];
+  }
+
+  /**
+   * Light up a LED at a local index (0-9) which maps to the correct physical LED
+   * based on the current ground button
+   * @param {number} localIndex - Local LED index (0-9)
+   * @param {number} r - Red value (0-255)
+   * @param {number} g - Green value (0-255)
+   * @param {number} b - Blue value (0-255)
+   */
+  lightUpLocalLed(localIndex, r = 255, g = 255, b = 255) {
+    if (localIndex < 0 || localIndex > 9) {
+      this.fancyLogger.logWarning(`Invalid local LED index: ${localIndex}. Must be 0-9.`);
+      return;
+    }
+
+    const currentLedArray = this.getCurrentLedArray();
+    const physicalLedIndex = currentLedArray[localIndex];
+    
+    this.fancyLogger.logMessage(
+      `Lighting local LED ${localIndex} → physical LED ${physicalLedIndex} (floor ${this.currentGroundButton})`
+    );
+    
+    this.ledChangeRGB(physicalLedIndex, r, g, b);
+  }
+
+  /**
+   * Turn off all LEDs in the current floor range
+   */
+  turnOffCurrentFloorLeds() {
+    const currentLedArray = this.getCurrentLedArray();
+    currentLedArray.forEach(physicalIndex => {
+      this.ledChangeRGB(physicalIndex, 0, 0, 0);
+    });
+  }
+
+  /**
+   * Local LED stepper: works with indices 0-9 for the current floor
+   * Button 0 = + : first black -> white
+   * Button 1 = - : last white -> black
+   * @param {number} button
+   * @private
+   */
+  _handleLocalLedStepper(button) {
+    // Normalisation: si le système envoie 1..10, on convertit en 0..9
+    const b = button
+    if (b === "0") {
+      // Find first black LED in local array (0-9)
+      const localIdx = this.localLedStates.findIndex((s) => s === 0);
+      if (localIdx === -1) return; // All LEDs are already white
+      
+      // Turn on this local LED
+      this.localLedStates[localIdx] = 1;
+      this.lightUpLocalLed(localIdx, 255, 255, 255); // White
+      
+      this.fancyLogger.logMessage(`LED Stepper +: Local LED ${localIdx} turned ON`);
+      return;
+    }
+
+    if (b === "1") {
+      // Find last white LED in local array (0-9)
+      const localIdx = this.localLedStates.lastIndexOf(1);
+      if (localIdx === -1) return; // All LEDs are already black
+      
+      // Turn off this local LED
+      this.localLedStates[localIdx] = 0;
+      this.lightUpLocalLed(localIdx, 0, 0, 0); // Black
+      
+      this.fancyLogger.logMessage(`LED Stepper -: Local LED ${localIdx} turned OFF`);
+      console.log(`[local-led-stepper] button=${button} localLedStates=`, [
+        ...this.localLedStates,
+      ]);
+    }
   }
 
   /* CONTRÔLE DU DIALOGUE */
@@ -45,10 +144,13 @@ export default class DialogMachine extends TalkMachine {
 
     // Reset des états LEDs
     this.ledStates.fill(0);
+    this.localLedStates.fill(0);
     this._renderAllLedsFromState();
 
-    // Reset triad button tracking
-    this.currentTriadButton = null;
+    // Reset ground button tracking
+    this.currentGroundButton = null;
+    this.rainLedStepperInitialized = false;
+    this.windLedStepperInitialized = false;
 
     this.fancyLogger.logMessage(
       "Dialog started: Long-press button 3, 4, or 5 to begin...",
@@ -97,20 +199,20 @@ export default class DialogMachine extends TalkMachine {
       case "initialisation":
         // CONCEPT DE DIALOGUE: État de configuration - prépare le système avant l'interaction
         this.ledsAllOff();
-        this.nextState = "waiting-for-triad"; // Wait for buttons 3, 4, or 5
+        this.nextState = "waiting-for-ground"; // Wait for buttons 3, 4, or 5
         this.fancyLogger.logMessage("initialisation done - waiting for long press on button 3, 4, or 5");
         this.waitingForUserInput = true;
         break;
 
-      case "waiting-for-triad":
+      case "waiting-for-ground":
         // This state is waiting for a long press on buttons 3, 4, or 5
         // The logic is handled in _handleButtonLongPressed
         this.fancyLogger.logMessage("Waiting for long press on button 3, 4, or 5...");
         break;
 
       case "welcome":
-        // CONCEPT: First triad button was long-pressed
-        this.fancyLogger.logMessage(`Welcome! Button ${this.currentTriadButton} long-pressed`);
+        // CONCEPT: First ground button was long-pressed
+        this.fancyLogger.logMessage(`Welcome! Button ${this.currentGroundButton} long-pressed`);
         this.speakNormal("Welcome! Let's choose the rain.");
         this.shouldContinue = true; // Continue to next state after speech
         this.nextState = "choose-rain";
@@ -118,18 +220,33 @@ export default class DialogMachine extends TalkMachine {
 
       case "choose-rain":
         // CONCEPT: User is in "rain" mode with current button held
-        this.fancyLogger.logMessage(`Choose rain mode - current button: ${this.currentTriadButton}`);
-        this.speakNormal(`You are in rain mode with button ${this.currentTriadButton}.`);
-        // Stay in this state until button is released AND another triad button is long-pressed
-        // This is handled in _handleButtonReleased and _handleButtonLongPressed
+        this.fancyLogger.logMessage(`Choose rain mode - current button: ${this.currentGroundButton}`);
+        this.speakNormal(`You are in rain mode with button ${this.currentGroundButton}.`);
+        
+        // Initialize LED stepper for this floor if first time entering
+        if (!this.rainLedStepperInitialized) {
+          this.turnOffCurrentFloorLeds();
+          this.rainLedStepperInitialized = true;
+          console.log(this.nextState);
+        }
+        
+        // Stay in this state until button is released AND another ground button is long-pressed
+        // LED stepper is handled in _handleButtonPressed for buttons 0 and 1
         this.waitingForUserInput = true;
         break;
 
       case "choose-wind":
-        // CONCEPT: User switched to another triad button
-        this.fancyLogger.logMessage(`Switched to wind mode - new button: ${this.currentTriadButton}`);
-        this.speakNormal(`Now in wind mode with button ${this.currentTriadButton}.`);
-        // You can add more logic here or transition to other states
+        // CONCEPT: User switched to another ground button
+        this.fancyLogger.logMessage(`Switched to wind mode - new button: ${this.currentGroundButton}`);
+        this.speakNormal(`Now in wind mode with button ${this.currentGroundButton}.`);
+        
+        // Initialize LED stepper for this floor if first time entering
+        if (!this.windLedStepperInitialized) {
+          this.turnOffCurrentFloorLeds();
+          this.windLedStepperInitialized = true;
+        }
+        
+        // LED stepper is handled in _handleButtonPressed for buttons 0 and 1
         this.waitingForUserInput = true;
         break;
 
@@ -239,9 +356,9 @@ export default class DialogMachine extends TalkMachine {
    */
   _handleLedStepper(button) {
     // Normalisation: si le système envoie 1..10, on convertit en 0..9
-    const b = button >= 1 && button <= 10 ? button - 1 : button;
+    const b = button 
 
-    if (b === 0) {
+    if (b === "0") {
       const idx = this.ledStates.findIndex((s) => s === 0);
       if (idx === -1) return;
       this.ledStates[idx] = 1;
@@ -249,7 +366,7 @@ export default class DialogMachine extends TalkMachine {
       return;
     }
 
-    if (b === 1) {
+    if (b === "1") {
       const idx = this.ledStates.lastIndexOf(1);
       if (idx === -1) return;
       this.ledStates[idx] = 0;
@@ -262,6 +379,14 @@ export default class DialogMachine extends TalkMachine {
 
   _handleButtonPressed(button, simulated = false) {
     this.buttonStates[button] = 1;
+    
+    // Handle LED stepper for buttons 0 and 1 when in choose-rain or choose-wind
+    if ((this.nextState === "choose-rain" || this.nextState === "choose-wind") && 
+        (button === "0" || button === "1")) {
+      this._handleLocalLedStepper(button);
+      return;
+    }
+    
     if (this.waitingForUserInput) {
       // this.dialogFlow('pressed', button);
     }
@@ -274,16 +399,16 @@ export default class DialogMachine extends TalkMachine {
 
     if (!this.dialogStarted || !this.waitingForUserInput) return;
 
-    // Check if this is the currently active triad button being released
-    const isTriadButton = button === "3" || button === "4" || button === "5";
+    // Check if this is the currently active ground button being released
+    const isGroundButton = button === "3" || button === "4" || button === "5";
     
-    if (isTriadButton && button === this.currentTriadButton) {
-      this.fancyLogger.logMessage(`Button ${button} (triad) released - current button cleared`);
+    if (isGroundButton && button === this.currentGroundButton) {
+      this.fancyLogger.logMessage(`Button ${button} (ground) released - current button cleared`);
       
       // In choose-rain or choose-wind, note that the button was released
-      // The user now needs to long-press another triad button to switch modes
+      // The user now needs to long-press another ground button to switch modes
       if (this.nextState === "choose-rain" || this.nextState === "choose-wind") {
-        this.fancyLogger.logMessage("Waiting for next triad button long-press...");
+        this.fancyLogger.logMessage("Waiting for next ground button long-press...");
       }
     }
 
@@ -308,31 +433,49 @@ export default class DialogMachine extends TalkMachine {
 
     
 
-    // Check if this is one of the triad buttons (3, 4, or 5)
-    const isTriadButton = button === "3" || button === "4" || button === "5";
+    // Check if this is one of the ground buttons (3, 4, or 5)
+    const isGroundButton = button === "3" || button === "4" || button === "5";
 
-    if (!isTriadButton) {
-      this.fancyLogger.logWarning(`Button ${button} is not part of the triad (3, 4, 5)`);
+    if (!isGroundButton) {
+      this.fancyLogger.logWarning(`Button ${button} is not part of the ground (3, 4, 5)`);
       return;
     }
 
     this.fancyLogger.logMessage(`Button ${button} long-pressed (${this.longPressThreshold}ms)`);
 
     // Handle based on current state
-    if (this.nextState === "waiting-for-triad") {
+    if (this.nextState === "waiting-for-ground") {
       // First long press - go to welcome
-      this.currentTriadButton = button;
+      this.currentGroundButton = button;
       this.nextState = "welcome";
       this.dialogFlow();
     } else if (this.nextState === "choose-rain") {
-      // Check if it's a DIFFERENT triad button
-      if (button !== this.currentTriadButton) {
-        this.fancyLogger.logMessage(`Switching from button ${this.currentTriadButton} to button ${button}`);
-        this.currentTriadButton = button;
+      // Check if it's a DIFFERENT ground button
+      if (button !== this.currentGroundButton) {
+        this.fancyLogger.logMessage(`Switching from button ${this.currentGroundButton} to button ${this.currentGroundButton}`);
+        this.currentGroundButton = button;
+        
+        // Reset local LED states when switching floors
+        this.localLedStates.fill(0);
+        this.windLedStepperInitialized = false;
+        
         this.nextState = "choose-wind";
         this.dialogFlow();
       } else {
         this.fancyLogger.logMessage(`Same button ${button} still pressed - staying in choose-rain`);
+      }
+    } else if (this.nextState === "choose-wind") {
+      // Allow switching back to choose-rain or to another floor
+      if (button !== this.currentGroundButton) {
+        this.fancyLogger.logMessage(`Switching from button ${this.currentGroundButton} to button ${button}`);
+        this.currentGroundButton = button;
+        
+        // Reset local LED states when switching floors
+        this.localLedStates.fill(0);
+        this.rainLedStepperInitialized = false;
+        
+        this.nextState = "choose-rain";
+        this.dialogFlow();
       }
     }
   }
