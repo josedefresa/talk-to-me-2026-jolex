@@ -40,6 +40,8 @@ export default class DialogMachine extends TalkMachine {
     // LED stepper initialization flags
     this.rainLedStepperInitialized = false;
     this.windLedStepperInitialized = false;
+    this.hourLedStepperInitialized = false;
+    this.pollutionLedStepperInitialized = false;
   }
 
   /**
@@ -155,6 +157,8 @@ export default class DialogMachine extends TalkMachine {
     this.lastLongPressedButton = null;
     this.rainLedStepperInitialized = false;
     this.windLedStepperInitialized = false;
+    this.hourLedStepperInitialized = false;
+    this.pollutionLedStepperInitialized = false;
 
     this.fancyLogger.logMessage(
       "Dialog started: Long-press button 3, 4, or 5 to begin...",
@@ -248,6 +252,36 @@ export default class DialogMachine extends TalkMachine {
         if (!this.windLedStepperInitialized) {
           this.turnOffCurrentFloorLeds();
           this.windLedStepperInitialized = true;
+        }
+        
+        // LED stepper is handled in _handleButtonPressed for buttons 0 and 1
+        this.waitingForUserInput = true;
+        break;
+
+      case "choose-hour":
+        // CONCEPT: User switched to hour mode
+        this.fancyLogger.logMessage(`Switched to hour mode - new button: ${this.currentGroundButton}`);
+        this.speakNormal(`Now in hour mode with button ${this.currentGroundButton}.`);
+        
+        // Initialize LED stepper for this floor if first time entering
+        if (!this.hourLedStepperInitialized) {
+          this.turnOffCurrentFloorLeds();
+          this.hourLedStepperInitialized = true;
+        }
+        
+        // LED stepper is handled in _handleButtonPressed for buttons 0 and 1
+        this.waitingForUserInput = true;
+        break;
+
+      case "choose-pollution":
+        // CONCEPT: User switched to pollution mode
+        this.fancyLogger.logMessage(`Switched to pollution mode - new button: ${this.currentGroundButton}`);
+        this.speakNormal(`Now in pollution mode with button ${this.currentGroundButton}.`);
+        
+        // Initialize LED stepper for this floor if first time entering
+        if (!this.pollutionLedStepperInitialized) {
+          this.turnOffCurrentFloorLeds();
+          this.pollutionLedStepperInitialized = true;
         }
         
         // LED stepper is handled in _handleButtonPressed for buttons 0 and 1
@@ -384,8 +418,11 @@ export default class DialogMachine extends TalkMachine {
   _handleButtonPressed(button, simulated = false) {
     this.buttonStates[button] = 1;
     
-    // Handle LED stepper for buttons 0 and 1 when in choose-rain or choose-wind
-    if ((this.nextState === "choose-rain" || this.nextState === "choose-wind") && 
+    // Handle LED stepper for buttons 0 and 1 when in any choose-* state
+    if ((this.nextState === "choose-rain" || 
+         this.nextState === "choose-wind" || 
+         this.nextState === "choose-hour" || 
+         this.nextState === "choose-pollution") && 
         (button === "0" || button === "1")) {
       this._handleLocalLedStepper(button);
       return;
@@ -438,7 +475,10 @@ export default class DialogMachine extends TalkMachine {
       
       // In choose-rain or choose-wind, note that the button was released
       // The user now needs to long-press another ground button to switch modes
-      if (this.nextState === "choose-rain" || this.nextState === "choose-wind") {
+      if (this.nextState === "choose-rain" || 
+          this.nextState === "choose-wind" || 
+          this.nextState === "choose-hour" || 
+          this.nextState === "choose-pollution") {
         this.fancyLogger.logMessage("Waiting for next ground button long-press...");
       }
     }
@@ -479,7 +519,10 @@ export default class DialogMachine extends TalkMachine {
       this.lastLongPressedButton = button;
       this.nextState = "welcome";
       this.dialogFlow();
-    } else if (this.nextState === "choose-rain" || this.nextState === "choose-wind") {
+    } else if (this.nextState === "choose-rain" || 
+               this.nextState === "choose-wind" || 
+               this.nextState === "choose-hour" || 
+               this.nextState === "choose-pollution") {
       // Check if it's the SAME button that was just long-pressed
       if (button === this.lastLongPressedButton) {
         this.fancyLogger.logMessage(`Same button ${button} long-pressed again - ignoring`);
@@ -499,11 +542,17 @@ export default class DialogMachine extends TalkMachine {
       // Reset local LED states when switching floors
       this.localLedStates.fill(0);
       
-      // Toggle between choose-rain and choose-wind
+      // Cycle through states: rain → wind → hour → pollution → rain
       if (this.nextState === "choose-rain") {
         this.windLedStepperInitialized = false;
         this.nextState = "choose-wind";
-      } else {
+      } else if (this.nextState === "choose-wind") {
+        this.hourLedStepperInitialized = false;
+        this.nextState = "choose-hour";
+      } else if (this.nextState === "choose-hour") {
+        this.pollutionLedStepperInitialized = false;
+        this.nextState = "choose-pollution";
+      } else if (this.nextState === "choose-pollution") {
         this.rainLedStepperInitialized = false;
         this.nextState = "choose-rain";
       }
