@@ -488,6 +488,11 @@ export default class DialogMachine extends TalkMachine {
       
       // It's a DIFFERENT ground button - switch state
       this.fancyLogger.logMessage(`Switching from button ${this.lastLongPressedButton} to button ${button}`);
+      
+      // Turn off LEDs from the previous floor before switching
+      this.turnOffCurrentFloorLeds();
+      
+      // Update to new button
       this.currentGroundButton = button;
       this.lastLongPressedButton = button;
       
