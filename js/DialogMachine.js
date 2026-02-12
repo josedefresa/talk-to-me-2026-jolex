@@ -35,7 +35,7 @@ export default class DialogMachine extends TalkMachine {
     this.lastGroundPair = null; // Tracks the last pair that completed a long press
     this.longPressThreshold = 3000; // 3 seconds in milliseconds
     this.pairPressTimers = {}; // Tracks timers for each pair
-    
+    this.longPressTriggered = {}; // Tracks if long press already triggered for each pair
     
     // Button pair definitions: pair 1 = buttons 1&2, pair 2 = buttons 3&4, pair 3 = buttons 5&6
     this.buttonPairs = {
@@ -594,17 +594,17 @@ export default class DialogMachine extends TalkMachine {
     // DEBUG: Buttons 7, 8, 9 simulate pair long-presses
     if (button === "7" && this.waitingForUserInput) {
       this.fancyLogger.logMessage("DEBUG: Button 7 pressed - simulating pair 1 (buttons 1&2) long-press");
-      this._handleGroundDetection(1);
+      this._handlePairLongPressedImmediate(1);
       return;
     }
     if (button === "8" && this.waitingForUserInput) {
       this.fancyLogger.logMessage("DEBUG: Button 8 pressed - simulating pair 2 (buttons 3&4) long-press");
-      this._handleGroundDetection(2);
+      this._handlePairLongPressedImmediate(2);
       return;
     }
     if (button === "9" && this.waitingForUserInput) {
       this.fancyLogger.logMessage("DEBUG: Button 9 pressed - simulating pair 3 (buttons 5&6) long-press");
-      this._handleGroundDetection(3);
+      this._handlePairLongPressedImmediate(3);
       return;
     }
     
@@ -618,28 +618,30 @@ export default class DialogMachine extends TalkMachine {
     const pairNumber = this._getButtonPair(button);
     
     // Check if this button is part of a pair that should trigger ground detection/switching
-    const isNewPair = pairNumber && (
+    const shouldDetectPair = pairNumber && (
       this.currentGroundPair === null ||  // No ground set yet
       pairNumber !== this.currentGroundPair  // Different pair than current ground
     );
     
-    if (isNewPair && this._areBothButtonsInPairPressed(pairNumber)) {
+    if (shouldDetectPair && this._areBothButtonsInPairPressed(pairNumber)) {
       // Clear any existing timer for this pair
       if (this.pairPressTimers[pairNumber]) {
         clearTimeout(this.pairPressTimers[pairNumber]);
       }
       
-      
+      // Reset the triggered flag
+      this.longPressTriggered[pairNumber] = false;
       
       const isInitialDetection = this.currentGroundPair === null;
-
+      const actionType = isInitialDetection ? "ground detection" : `ground switch from ${this.currentGroundPair}`;
+      this.fancyLogger.logMessage(`Both buttons in pair ${pairNumber} pressed - starting 3sec timer for ${actionType}`);
       
       // Set timer to trigger after threshold
       this.pairPressTimers[pairNumber] = setTimeout(() => {
-        if (this._areBothButtonsInPairPressed(pairNumber)) {
-          
+        if (this._areBothButtonsInPairPressed(pairNumber) && !this.longPressTriggered[pairNumber]) {
+          this.longPressTriggered[pairNumber] = true;
           // Use the same handler for both initial detection and switching
-          this._handleGroundDetection(pairNumber);
+          this._handlePairLongPressedImmediate(pairNumber);
         }
       }, this.longPressThreshold);
       
@@ -688,29 +690,37 @@ export default class DialogMachine extends TalkMachine {
     
     // Check if this button is part of a ground pair
     const pairNumber = this._getButtonPair(button);
-    // Check if this button is part of a pair that should trigger ground detection/switching
-    const isNewPair = pairNumber && (
-      this.currentGroundPair === null ||  // No ground set yet
-      pairNumber !== this.currentGroundPair && this.pairPressTimers[pairNumber] // Different pair than current ground
-    );
-    // === GROUND ===
-    if (isNewPair) {
+    
+    // === GROUND IS NOT SET - CANCEL GROUND DETECTION TIMER IF BUTTON RELEASED ===
+    if (this.currentGroundPair === null) {
       // Clear any long press timer for this pair when either button is released
-      
+      if (pairNumber && this.pairPressTimers[pairNumber]) {
         clearTimeout(this.pairPressTimers[pairNumber]);
         delete this.pairPressTimers[pairNumber];
         this.fancyLogger.logMessage(`Pair ${pairNumber} timer cancelled - button ${button} released before 3 seconds`);
-    
+      }
       return; // Don't process anything else when ground is not set
     }
     
+    // === GROUND IS SET ===
     
+    // If this is a button from a DIFFERENT pair (potential ground switch), cancel its timer
+    if (pairNumber && pairNumber !== this.currentGroundPair && this.pairPressTimers[pairNumber]) {
+      clearTimeout(this.pairPressTimers[pairNumber]);
+      delete this.pairPressTimers[pairNumber];
+      this.fancyLogger.logMessage(`Pair ${pairNumber} ground switch timer cancelled - button ${button} released before 3 seconds`);
+    }
     
     // LED stepper buttons work on press only, no need to handle releases
     
     if (!this.dialogStarted || !this.waitingForUserInput) return;
 
-    
+    // Handle old LED stepper mode if needed
+    if (this.mode === "led-stepper") {
+      this.fancyLogger.logMessage(`button released raw=${button}`);
+      this._handleLedStepper(button);
+      return;
+    }
   }
 
   /**
@@ -719,13 +729,13 @@ export default class DialogMachine extends TalkMachine {
    * @param {number} pairNumber - The pair number (1, 2, or 3)
    * @private
    */
-  _handleGroundDetection(pairNumber) {
+  _handlePairLongPressedImmediate(pairNumber) {
     if (!this.waitingForUserInput) return;
 
     // Verify both buttons are still pressed
     if (!this._areBothButtonsInPairPressed(pairNumber)) {
       this.fancyLogger.logWarning(`Pair ${pairNumber} long-press triggered but buttons no longer both pressed`);
-      return;
+      //return;
     }
 
     this.fancyLogger.logMessage(`Pair ${pairNumber} long-pressed IMMEDIATELY (${this.longPressThreshold}ms threshold reached while holding both buttons)`);
@@ -846,7 +856,7 @@ export default class DialogMachine extends TalkMachine {
   /**
    * override de _handleButtonLongPressed de TalkMachine
    * This is called on button RELEASE by the parent class if duration >= longPressDelay
-   * We handle everything immediately in _handleGroundDetection, so this does nothing
+   * We handle everything immediately in _handlePairLongPressedImmediate, so this does nothing
    * @override
    * @protected
    */
