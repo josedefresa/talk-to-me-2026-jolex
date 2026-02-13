@@ -85,7 +85,7 @@ export default class DialogMachine extends TalkMachine {
       "une forte pluie",
       "une pluie intense",
       "un faible orage",
-      "un orage moderé",
+      "une orage moderé",
       "un orage violent",
       "un déluge",
     ];
@@ -225,11 +225,10 @@ export default class DialogMachine extends TalkMachine {
     const ledArray = ledMapping[pairNumber];
     if (!ledArray) return;
 
-    // Slowed timings for a gentler ground activation animation
-    const stepDelayMs = 140;
-    const fadeInMs = 140;
-    const fadeOutMs = 140;
-    const holdMs = 200;
+    const stepDelayMs = 80;
+    const fadeInMs = 80;
+    const fadeOutMs = 80;
+    const holdMs = 90;
     const onColor = [255, 255, 255];
     const offColor = [0, 0, 0];
     const localCenterOutPairs = [
@@ -296,7 +295,7 @@ export default class DialogMachine extends TalkMachine {
   }
 
   async animateGroundArraysLoading(times = 3) {
-    const stepDelayMs = 100;
+    const stepDelayMs = 80;
     const cycleDelayMs = 200;
 
     const ground1 = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29];
@@ -1067,6 +1066,14 @@ export default class DialogMachine extends TalkMachine {
         this.fancyLogger.logMessage("═══════════════════════════════════");
 
         const pairNumber = this.currentGroundPair;
+        if (pairNumber !== null) {
+          (async () => {
+            await this.animateGroundActivation(pairNumber);
+            await this.animateGroundActivation(pairNumber);
+            await this.animateGroundActivation(pairNumber);
+          })();
+        }
+
         this.finalMatchedLocation = this.findClosestLocation();
         this.finalSpeechPhase = 1;
         this.speakNormal("Analyse des conditions en cours…");
@@ -1094,7 +1101,7 @@ export default class DialogMachine extends TalkMachine {
   speakNormal(_text) {
     // appelé pour dire un texte
     this._setCaseAudioDucking(true);
-    this.speechText(_text, [196, 0.9, 0.8]);
+    this.speechText(_text, [186, 0.9, 0.8]);
   }
 
   speakSequence(lines, { continueToNextState = false } = {}) {
@@ -1272,10 +1279,9 @@ export default class DialogMachine extends TalkMachine {
     }
     if (button === "9" && this.waitingForUserInput) {
       this.fancyLogger.logMessage(
-        "DEBUG: Button 9 pressed - jumping directly to summary",
+        "DEBUG: Button 9 pressed - simulating pair 3 (buttons 5&6) long-press",
       );
-      this.nextState = "summary";
-      this.dialogFlow();
+      this._handlePairLongPressedImmediate(3);
       return;
     }
 
@@ -1440,9 +1446,9 @@ export default class DialogMachine extends TalkMachine {
       this.currentGroundPair = pairNumber;
       this.lastGroundPair = pairNumber;
       (async () => {
-        for (let i = 0; i < 13; i++) {
-          await this.animateGroundActivation(pairNumber);
-        }
+        await this.animateGroundActivation(pairNumber);
+        await this.animateGroundActivation(pairNumber);
+        await this.animateGroundActivation(pairNumber);
       })();
       this.nextState = "welcome";
       this.dialogFlow();
@@ -1476,10 +1482,9 @@ export default class DialogMachine extends TalkMachine {
       this.currentGroundPair = pairNumber;
       this.lastGroundPair = pairNumber;
       (async () => {
-        const repeat = this.nextState === "choose-temperature" ? 8 : 3;
-        for (let i = 0; i < repeat; i++) {
-          await this.animateGroundActivation(pairNumber);
-        }
+        await this.animateGroundActivation(pairNumber);
+        await this.animateGroundActivation(pairNumber);
+        await this.animateGroundActivation(pairNumber);
       })();
 
       // Determine the next state and restore its LED configuration
@@ -1928,23 +1933,9 @@ export default class DialogMachine extends TalkMachine {
       this.finalSpeechPhase = 2;
 
       (async () => {
-        // First, show the ground arrays loading animation
         await this.animateGroundArraysLoading(3);
 
-        // Determine pair and match ahead of time
-        const pairNumber = this.currentGroundPair ?? this.lastGroundPair ?? 1;
         const match = this.finalMatchedLocation || this.findClosestLocation();
-
-        // Start ground activations concurrently with speech (fire-and-forget)
-        (async () => {
-          if (pairNumber !== null && pairNumber !== undefined) {
-            for (let i = 0; i < 3; i++) {
-              await this.animateGroundActivation(pairNumber);
-            }
-          }
-        })();
-
-        // Speak the match while the ground activation runs
         this.speakNormal(
           `Correspondance trouvée. Cette météo se trouve actuellement à: ${match.name}.`,
         );
